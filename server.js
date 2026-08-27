@@ -9,7 +9,6 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 房间状态存储
 const rooms = {};
 
 io.on('connection', (socket) => {
@@ -18,31 +17,57 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     socket.roomId = roomId;
     socket.playerName = playerName;
-    socket.isJudge = isJudge;
 
     if (!rooms[roomId]) {
       rooms[roomId] = {
-        judgeId: isJudge ? socket.id : null,
+        judgeId: null,
         players: {},
         sheriffId: null,
         gameStarted: false,
-        rolesConfig: { werewolf: 0, villager: 0, seer: 0, witch: 0, hunter: 0, guard: 0, idiot: 0 }
+        rolesConfig: { werewolf: 3, villager: 3, seer: 1, witch: 1, hunter: 1, guard: 0, idiot: 0 }
       };
     }
 
+    const room = rooms[roomId];
+    let actualIsJudge = false;
+
+    // 校验是否允许成为法官（一个房间只能有一个法官）
     if (isJudge) {
-      rooms[roomId].judgeId = socket.id;
+      if (!room.judgeId) {
+        room.judgeId = socket.id;
+        actualIsJudge = true;
+      } else {
+        socket.emit('errorMsg', '房间内已有法官，你已作为普通玩家加入');
+      }
     }
 
-    rooms[roomId].players[socket.id] = {
+    socket.isJudge = actualIsJudge;
+
+    room.players[socket.id] = {
       id: socket.id,
       name: playerName,
-      isJudge: isJudge,
+      isJudge: actualIsJudge,
       isDead: false,
       role: null
     };
 
-    io.to(roomId).emit('roomUpdate', rooms[roomId]);
+    io.to(roomId).emit('roomUpdate', room);
+  });
+
+  // 移交法官权限
+  socket.on('transferJudge', (targetId) => {
+    const roomId = socket.roomId;
+    const room = rooms[roomId];
+    if (!room || socket.id !== room.judgeId || !room.players[targetId]) return;
+
+    // 前任法官降级为普通玩家
+    room.players[room.judgeId].isJudge = false;
+    // 新法官升级
+    room.players[targetId].isJudge = true;
+    room.players[targetId].role = null; // 法官不参与发牌角色
+    room.judgeId = targetId;
+
+    io.to(roomId).emit('roomUpdate', room);
   });
 
   // 更新角色配置（仅法官）
@@ -72,7 +97,7 @@ io.on('connection', (socket) => {
     }
 
     if (playerIds.length === 0) {
-      socket.emit('errorMsg', '房间内暂无玩家');
+      socket.emit('errorMsg', '房间内暂无普通玩家');
       return;
     }
 
@@ -81,13 +106,12 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // 洗牌算法
+    // 洗牌
     for (let i = rolePool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [rolePool[i], rolePool[j]] = [rolePool[j], rolePool[i]];
     }
 
-    // 重置状态与分配
     room.gameStarted = true;
     room.sheriffId = null;
     playerIds.forEach((id, index) => {
@@ -109,30 +133,30 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 警长任命 / 移交徽章
+  // 警长任命 / 移交警徽
   socket.on('setSheriff', (targetId) => {
     const roomId = socket.roomId;
     const room = rooms[roomId];
     if (!room) return;
 
-    // 情况 1: 首次竞选由法官直接任命
+    // 首次任命（由法官指定）
     if (socket.id === room.judgeId && !room.sheriffId) {
       room.sheriffId = targetId;
       io.to(roomId).emit('roomUpdate', room);
       return;
     }
 
-    // 情况 2: 原警长已阵亡，移交警徽（原警长操作或法官协助）
+    // 警长死亡后移交或撕毁
     const currentSheriff = room.players[room.sheriffId];
     if (currentSheriff && currentSheriff.isDead) {
       if (socket.id === room.sheriffId || socket.id === room.judgeId) {
-        room.sheriffId = targetId; // 传 null 为撕警徽，传 targetId 为移交
+        room.sheriffId = targetId;
         io.to(roomId).emit('roomUpdate', room);
       }
     }
   });
 
-  // 断开连接处理
+  // 离开房间
   socket.on('disconnect', () => {
     const roomId = socket.roomId;
     if (rooms[roomId] && rooms[roomId].players[socket.id]) {

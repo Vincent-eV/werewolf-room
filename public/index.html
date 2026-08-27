@@ -8,11 +8,12 @@
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { margin: 0; padding: 15px; background: #121212; color: #f0f0f0; }
     .card { background: #1e1e1e; border-radius: 10px; padding: 16px; margin-bottom: 16px; border: 1px solid #333; }
-    h2, h3 { margin-top: 0; color: #e94560; }
+    h2, h3, h4 { margin-top: 0; color: #e94560; }
     input, button, select { width: 100%; padding: 12px; margin: 8px 0; border-radius: 6px; border: 1px solid #444; background: #2a2a2a; color: #fff; font-size: 16px; }
     button { background: #e94560; border: none; font-weight: bold; cursor: pointer; }
     button:disabled { background: #555; cursor: not-allowed; }
     .btn-secondary { background: #0f3460; }
+    .btn-warning { background: #9b59b6; }
     .btn-dead { background: #444; color: #888; }
     .role-config { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .player-row { display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #252525; border-radius: 6px; margin-bottom: 6px; }
@@ -28,7 +29,7 @@
 </head>
 <body>
 
-  <!-- 加入页面 -->
+  <!-- 登录加入卡片 -->
   <div id="joinSection" class="card">
     <h2>🐺 狼人杀联机房间</h2>
     <input type="text" id="roomInput" placeholder="输入房间号 (如 888)">
@@ -39,28 +40,29 @@
     <button onclick="joinGame()">进入房间</button>
   </div>
 
-  <!-- 游戏大厅 -->
+  <!-- 游戏主大厅 -->
   <div id="gameSection" class="hidden">
     
-    <!-- 玩家自己的身份卡片 -->
+    <!-- 普通玩家专属：身份卡片 -->
     <div id="roleCard" class="card hidden">
       <h3>🎭 你的身份</h3>
       <div id="roleText" class="role-display">等待法官发牌...</div>
     </div>
 
-    <!-- 警长移交面板（仅死亡警长可见） -->
+    <!-- 警长移交卡片（仅警长阵亡后可见） -->
     <div id="sheriffPassSection" class="card hidden" style="border-color: #f39c12;">
       <h3>🎖️ 警长移交 / 撕毁警徽</h3>
-      <p style="font-size:13px; color:#aaa;">你已被标记出局，请移交或撕毁警徽：</p>
+      <p style="font-size:13px; color:#aaa;">你已出局，请移交或撕毁警徽：</p>
       <select id="sheriffTargetSelect"></select>
       <button class="btn-secondary" onclick="passSheriff()">确定移交</button>
       <button class="btn-dead" onclick="tearSheriff()">撕毁警徽</button>
     </div>
 
-    <!-- 法官控制中心（仅法官可见） -->
+    <!-- 法官专属控制台 -->
     <div id="judgeSection" class="card hidden" style="border-color: #9b59b6;">
       <h3>⚖️ 法官控制台</h3>
       
+      <!-- 角色配置 -->
       <div class="role-config">
         <div>狼人: <input type="number" id="cfg_werewolf" value="3" min="0"></div>
         <div>村民: <input type="number" id="cfg_villager" value="3" min="0"></div>
@@ -74,14 +76,20 @@
 
       <hr style="border-color:#333; margin:15px 0;">
       
-      <div id="judgeSheriffElection">
-        <h4>🎖️ 警长选举控制</h4>
-        <select id="judgeSheriffSelect"></select>
-        <button class="btn-secondary" onclick="judgeAppointSheriff()">任命选中玩家为警长</button>
-      </div>
+      <!-- 警长选举 -->
+      <h4>🎖️ 警长任命</h4>
+      <select id="judgeSheriffSelect"></select>
+      <button class="btn-secondary" onclick="judgeAppointSheriff()">任命选中玩家为警长</button>
+
+      <hr style="border-color:#333; margin:15px 0;">
+
+      <!-- 移交法官 -->
+      <h4>🔄 移交法官权限</h4>
+      <select id="transferJudgeSelect"></select>
+      <button class="btn-warning" onclick="transferJudge()">将法官移交给该玩家</button>
     </div>
 
-    <!-- 房间玩家列表 -->
+    <!-- 玩家名单列表 -->
     <div class="card">
       <h3>👥 房间玩家 (<span id="playerCount">0</span>人)</h3>
       <div id="playerList"></div>
@@ -92,9 +100,7 @@
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
-    let currentRoom = null;
     let myId = null;
-    let amIJudge = false;
 
     const roleNameMap = {
       werewolf: '狼人', villager: '村民', seer: '预言家',
@@ -104,19 +110,13 @@
     function joinGame() {
       const roomId = document.getElementById('roomInput').value.trim();
       const playerName = document.getElementById('nameInput').value.trim();
-      amIJudge = document.getElementById('isJudgeCheck').checked;
+      const isJudge = document.getElementById('isJudgeCheck').checked;
 
       if (!roomId || !playerName) return alert('请完整输入房间号与昵称');
 
-      socket.emit('joinRoom', { roomId, playerName, isJudge: amIJudge });
+      socket.emit('joinRoom', { roomId, playerName, isJudge });
       document.getElementById('joinSection').classList.add('hidden');
       document.getElementById('gameSection').classList.remove('hidden');
-
-      if (amIJudge) {
-        document.getElementById('judgeSection').classList.remove('hidden');
-      } else {
-        document.getElementById('roleCard').classList.remove('hidden');
-      }
     }
 
     function updateConfig() {
@@ -145,6 +145,14 @@
       if (targetId) socket.emit('setSheriff', targetId);
     }
 
+    function transferJudge() {
+      const targetId = document.getElementById('transferJudgeSelect').value;
+      if (!targetId) return alert('请先选择要移交的玩家');
+      if (confirm('确定要将法官权限移交给该玩家吗？移交后你将成为普通玩家。')) {
+        socket.emit('transferJudge', targetId);
+      }
+    }
+
     function passSheriff() {
       const targetId = document.getElementById('sheriffTargetSelect').value;
       if (targetId) socket.emit('setSheriff', targetId);
@@ -163,20 +171,31 @@
     socket.on('errorMsg', (msg) => { alert(msg); });
 
     socket.on('roomUpdate', (room) => {
-      currentRoom = room;
+      const isMeJudge = (room.judgeId === myId);
+
+      // 动态控制视图展示
+      if (isMeJudge) {
+        document.getElementById('judgeSection').classList.remove('hidden');
+        document.getElementById('roleCard').classList.add('hidden');
+      } else {
+        document.getElementById('judgeSection').classList.add('hidden');
+        document.getElementById('roleCard').classList.remove('hidden');
+      }
+
       const playerListEl = document.getElementById('playerList');
       const sheriffSelectEl = document.getElementById('judgeSheriffSelect');
+      const transferSelectEl = document.getElementById('transferJudgeSelect');
       const passSelectEl = document.getElementById('sheriffTargetSelect');
       
       playerListEl.innerHTML = '';
       sheriffSelectEl.innerHTML = '<option value="">-- 选择警长 --</option>';
+      transferSelectEl.innerHTML = '<option value="">-- 选择新法官 --</option>';
       passSelectEl.innerHTML = '<option value="">-- 选择继任者 --</option>';
 
       const players = Object.values(room.players);
       document.getElementById('playerCount').innerText = players.length;
 
       players.forEach(p => {
-        // 构建玩家展示条
         const row = document.createElement('div');
         row.className = `player-row ${p.isDead ? 'dead' : ''}`;
 
@@ -186,24 +205,23 @@
         tags += `<span class="badge ${p.isDead ? 'badge-dead' : 'badge-alive'}">${p.isDead ? '已出局' : '存活'}</span>`;
 
         let actionBtn = '';
-        if (amIJudge && !p.isJudge) {
-          actionBtn = `<button style="width:auto; padding:4px 8px; margin:0;" onclick="toggleDeath('${p.id}')">${p.isDead ? '复活/撤销' : '标记死亡'}</button>`;
+        if (isMeJudge && !p.isJudge) {
+          actionBtn = `<button style="width:auto; padding:4px 8px; margin:0;" onclick="toggleDeath('${p.id}')">${p.isDead ? '撤销死亡' : '标记死亡'}</button>`;
         }
 
         row.innerHTML = `<div><strong>${p.name}</strong> ${tags}</div><div>${actionBtn}</div>`;
         playerListEl.appendChild(row);
 
-        // 下拉框填充
+        // 填充下拉选项
         if (!p.isJudge) {
-          const opt1 = new Option(p.name, p.id);
-          const opt2 = new Option(p.name, p.id);
-          sheriffSelectEl.add(opt1);
-          if (!p.isDead) passSelectEl.add(opt2);
+          sheriffSelectEl.add(new Option(p.name, p.id));
+          transferSelectEl.add(new Option(p.name, p.id));
+          if (!p.isDead) passSelectEl.add(new Option(p.name, p.id));
         }
       });
 
-      // 移交警徽面板逻辑（原警长阵亡后弹出）
-      const amISheriff = room.sheriffId === myId;
+      // 警长移交控制面板
+      const amISheriff = (room.sheriffId === myId);
       const amIDead = room.players[myId]?.isDead;
       if (amISheriff && amIDead) {
         document.getElementById('sheriffPassSection').classList.remove('hidden');
