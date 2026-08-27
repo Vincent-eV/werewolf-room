@@ -16,7 +16,18 @@
     .btn-warning { background: #9b59b6; }
     .btn-reset { background: #c0392b; }
     .btn-dead { background: #444; color: #888; }
-    .role-config { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn-add { background: #27ae60; padding: 8px 12px; margin: 0; width: auto; font-size: 14px; }
+    .btn-remove { background: #c0392b; padding: 4px 8px; margin: 0; width: auto; font-size: 12px; }
+    .btn-success { background: #27ae60; }
+    
+    .role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+    .role-item { background: #262626; padding: 8px; border-radius: 6px; border: 1px solid #3a3a3a; }
+    .role-item label { display: flex; justify-content: space-between; align-items: center; font-size: 14px; margin-bottom: 4px; font-weight: bold; }
+    .role-item input { margin: 0; padding: 8px; }
+
+    .add-role-box { display: flex; gap: 8px; align-items: center; margin: 10px 0 16px 0; background: #252525; padding: 10px; border-radius: 6px; border: 1px dashed #555; }
+    .add-role-box input { margin: 0; }
+
     .player-row { display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #252525; border-radius: 6px; margin-bottom: 6px; }
     .player-row.dead { opacity: 0.5; text-decoration: line-through; }
     .badge { padding: 3px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-left: 4px; display: inline-block; }
@@ -26,7 +37,19 @@
     .badge-alive { background: #2ecc71; color: #fff; }
     .badge-role { background: #e94560; color: #fff; font-size: 13px; }
     .role-display { font-size: 24px; font-weight: bold; text-align: center; padding: 20px; background: #0f3460; border-radius: 8px; margin: 10px 0; color: #ffeb3b; transition: all 0.3s ease; }
-    .hidden { display: none; }
+    
+    /* 遮罩与弹窗设计 */
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+    .modal-box { background: #1e1e1e; border: 2px solid #9b59b6; border-radius: 12px; padding: 24px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
+    .modal-box h3 { margin-bottom: 12px; }
+    .modal-btns { display: flex; gap: 10px; margin-top: 16px; }
+
+    .pulse-dot { display: inline-block; width: 10px; height: 10px; background: #9b59b6; border-radius: 50%; margin: 0 3px; animation: pulse 1.2s infinite ease-in-out both; }
+    .pulse-dot:nth-child(1) { animation-delay: -0.32s; }
+    .pulse-dot:nth-child(2) { animation-delay: -0.16s; }
+    @keyframes pulse { 0%, 80%, 100% { transform: scale(0); opacity: 0.3; } 40% { transform: scale(1); opacity: 1; } }
+
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
@@ -68,16 +91,17 @@
     <div id="judgeSection" class="card hidden" style="border-color: #9b59b6;">
       <h3>⚖️ 法官控制台</h3>
       
-      <!-- 角色配置 -->
-      <div class="role-config">
-        <div>狼人: <input type="number" id="cfg_werewolf" value="3" min="0"></div>
-        <div>村民: <input type="number" id="cfg_villager" value="3" min="0"></div>
-        <div>预言家: <input type="number" id="cfg_seer" value="1" min="0"></div>
-        <div>女巫: <input type="number" id="cfg_witch" value="1" min="0"></div>
-        <div>猎人: <input type="number" id="cfg_hunter" value="1" min="0"></div>
-        <div>守卫: <input type="number" id="cfg_guard" value="0" min="0"></div>
+      <!-- 动态角色网格 -->
+      <div id="roleGrid" class="role-grid"></div>
+
+      <!-- 添加新角色区域 -->
+      <div class="add-role-box">
+        <input type="text" id="newRoleName" placeholder="新角色名 (如: 恶灵骑士/白痴)" style="flex: 2;">
+        <input type="number" id="newRoleCount" value="1" min="1" style="flex: 1;">
+        <button class="btn-add" onclick="addNewRole()">➕ 添加角色</button>
       </div>
-      <button class="btn-secondary" onclick="updateConfig()">同步配置</button>
+
+      <button class="btn-secondary" onclick="syncConfig()">💾 同步配置</button>
       <button id="startBtn" onclick="startGame()">🎲 开始分配角色 (仅法官)</button>
       <button class="btn-reset" onclick="confirmResetGame()">🔄 结束本局 (开始下一轮)</button>
 
@@ -104,15 +128,102 @@
 
   </div>
 
+  <!-- 弹窗 1：法官发起后的等待界面 -->
+  <div id="judgeWaitingModal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <h3>⏳ 正在移交法官</h3>
+      <p style="color: #aaa; font-size: 14px; margin: 15px 0;">
+        已向玩家 <strong id="waitingTargetName" style="color: #fff;"></strong> 发送移交邀请<br>
+        等待对方确认中
+        <span class="pulse-dot"></span>
+        <span class="pulse-dot"></span>
+        <span class="pulse-dot"></span>
+      </p>
+      <button class="btn-dead" onclick="cancelTransferJudge()">❌ 取消移交</button>
+    </div>
+  </div>
+
+  <!-- 弹窗 2：被移交玩家的确认接收界面 -->
+  <div id="judgeConfirmModal" class="modal-overlay hidden">
+    <div class="modal-box" style="border-color: #e94560;">
+      <h3 style="color: #ffeb3b;">⚖️ 法官权限移交邀请</h3>
+      <p style="color: #ddd; font-size: 15px; margin: 16px 0;">
+        法官 <strong id="fromJudgeNameText" style="color:#e94560;"></strong> 想要将法官权限移交给您。<br>
+        接受后您将成为全场法官并主持本局。
+      </p>
+      <div class="modal-btns">
+        <button class="btn-success" onclick="respondTransfer(true)" style="flex:1;">✅ 确认接受</button>
+        <button class="btn-dead" onclick="respondTransfer(false)" style="flex:1;">❌ 拒绝</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
     let myId = null;
+    let pendingFromId = null;
 
-    const roleNameMap = {
-      werewolf: '狼人', villager: '村民', seer: '预言家',
-      witch: '女巫', hunter: '猎人', guard: '守卫', idiot: '白痴'
+    let currentRolesConfig = {
+      '狼人': 3,
+      '村民': 3,
+      '预言家': 1,
+      '女巫': 1,
+      '猎人': 1,
+      '守卫': 0
     };
+
+    function renderRoleInputs() {
+      const grid = document.getElementById('roleGrid');
+      grid.innerHTML = '';
+
+      Object.keys(currentRolesConfig).forEach(roleName => {
+        const item = document.createElement('div');
+        item.className = 'role-item';
+        
+        const isDefault = ['狼人', '村民', '预言家', '女巫', '猎人', '守卫'].includes(roleName);
+        const deleteBtn = !isDefault ? `<button class="btn-remove" onclick="removeRole('${roleName}')">✕</button>` : '';
+
+        item.innerHTML = `
+          <label>
+            <span>${roleName}</span>
+            ${deleteBtn}
+          </label>
+          <input type="number" min="0" value="${currentRolesConfig[roleName]}" onchange="updateRoleValue('${roleName}', this.value)">
+        `;
+        grid.appendChild(item);
+      });
+    }
+
+    function updateRoleValue(role, val) {
+      currentRolesConfig[role] = parseInt(val) || 0;
+    }
+
+    function addNewRole() {
+      const nameInput = document.getElementById('newRoleName');
+      const countInput = document.getElementById('newRoleCount');
+      const name = nameInput.value.trim();
+      const count = parseInt(countInput.value) || 1;
+
+      if (!name) return alert('请输入角色名称');
+      if (currentRolesConfig.hasOwnProperty(name)) return alert('该角色已存在');
+
+      currentRolesConfig[name] = count;
+      nameInput.value = '';
+      countInput.value = '1';
+      renderRoleInputs();
+      syncConfig();
+    }
+
+    function removeRole(roleName) {
+      delete currentRolesConfig[roleName];
+      renderRoleInputs();
+      syncConfig();
+    }
+
+    function syncConfig() {
+      socket.emit('updateConfig', currentRolesConfig);
+    }
 
     function joinGame() {
       const roomId = document.getElementById('roomInput').value.trim();
@@ -124,22 +235,11 @@
       socket.emit('joinRoom', { roomId, playerName, isJudge });
       document.getElementById('joinSection').classList.add('hidden');
       document.getElementById('gameSection').classList.remove('hidden');
-    }
-
-    function updateConfig() {
-      const config = {
-        werewolf: parseInt(document.getElementById('cfg_werewolf').value) || 0,
-        villager: parseInt(document.getElementById('cfg_villager').value) || 0,
-        seer: parseInt(document.getElementById('cfg_seer').value) || 0,
-        witch: parseInt(document.getElementById('cfg_witch').value) || 0,
-        hunter: parseInt(document.getElementById('cfg_hunter').value) || 0,
-        guard: parseInt(document.getElementById('cfg_guard').value) || 0
-      };
-      socket.emit('updateConfig', config);
+      renderRoleInputs();
     }
 
     function startGame() {
-      updateConfig();
+      syncConfig();
       socket.emit('startGame');
     }
 
@@ -158,10 +258,23 @@
       if (targetId) socket.emit('setSheriff', targetId);
     }
 
+    // 法官点击发起移交
     function requestTransferJudge() {
       const targetId = document.getElementById('transferJudgeSelect').value;
       if (!targetId) return alert('请先选择要移交的玩家');
       socket.emit('requestTransferJudge', targetId);
+    }
+
+    // 法官在等待弹窗中点击取消
+    function cancelTransferJudge() {
+      socket.emit('cancelTransferJudge');
+    }
+
+    // 被移交玩家点击接受或拒绝
+    function respondTransfer(accept) {
+      document.getElementById('judgeConfirmModal').classList.add('hidden');
+      socket.emit('responseTransferJudge', { accept, fromId: pendingFromId });
+      pendingFromId = null;
     }
 
     function passSheriff() {
@@ -174,19 +287,55 @@
     }
 
     socket.on('connect', () => { myId = socket.id; });
-
     socket.on('errorMsg', (msg) => { alert(msg); });
 
-    // 收到法官权限移交请求的确认弹窗
+    // 原法官端：弹出等待弹窗
+    socket.on('transferWaitingStart', ({ targetName }) => {
+      document.getElementById('waitingTargetName').innerText = `【${targetName}】`;
+      document.getElementById('judgeWaitingModal').classList.remove('hidden');
+    });
+
+    // 原法官端：关闭等待弹窗
+    socket.on('transferWaitingEnd', () => {
+      document.getElementById('judgeWaitingModal').classList.add('hidden');
+    });
+
+    // 原法官端：收到对方拒绝通知
+    socket.on('transferRejectedNotify', ({ targetName }) => {
+      alert(`玩家【${targetName}】拒绝了法官权限移交请求。`);
+    });
+
+    // 被移交玩家端：弹出确认接收弹窗
     socket.on('askJudgeAccept', ({ fromId, fromName }) => {
-      const accept = confirm(`法官【${fromName}】想要将法官权限移交给您，是否接受？\n点击“确定”成为新法官，点击“取消”拒绝。`);
-      socket.emit('responseTransferJudge', { accept, fromId });
+      pendingFromId = fromId;
+      document.getElementById('fromJudgeNameText').innerText = `【${fromName}】`;
+      document.getElementById('judgeConfirmModal').classList.remove('hidden');
+    });
+
+    // 被移交玩家端：法官主动取消了移交
+    socket.on('transferCancelledByJudge', () => {
+      document.getElementById('judgeConfirmModal').classList.add('hidden');
+      pendingFromId = null;
+      alert('法官已取消本次权限移交。');
+    });
+
+    socket.on('transferAcceptedSuccess', () => {
+      alert('🎉 恭喜！您已成功接任法官。');
+    });
+
+    socket.on('configUpdate', (config) => {
+      currentRolesConfig = config;
+      renderRoleInputs();
     });
 
     socket.on('roomUpdate', (room) => {
       const isMeJudge = (room.judgeId === myId);
 
-      // 视图控制
+      if (room.rolesConfig) {
+        currentRolesConfig = room.rolesConfig;
+        renderRoleInputs();
+      }
+
       if (isMeJudge) {
         document.getElementById('judgeSection').classList.remove('hidden');
         document.getElementById('roleCard').classList.add('hidden');
@@ -206,7 +355,7 @@
         const me = room.players[myId];
         if (me) {
           const myRole = me.role;
-          document.getElementById('roleText').innerText = myRole ? (roleNameMap[myRole] || myRole) : '等待法官发牌...';
+          document.getElementById('roleText').innerText = myRole || '等待法官发牌...';
           
           const sheriffBadge = document.getElementById('mySheriffBadge');
           const statusBadge = document.getElementById('myStatusBadge');
@@ -260,7 +409,7 @@
         tags += `<span class="badge ${p.isDead ? 'badge-dead' : 'badge-alive'}">${p.isDead ? '已出局' : '存活'}</span>`;
 
         if (isMeJudge && !p.isJudge && p.role) {
-          tags += `<span class="badge badge-role">【${roleNameMap[p.role] || p.role}】</span>`;
+          tags += `<span class="badge badge-role">【${p.role}】</span>`;
         }
 
         let actionBtn = '';

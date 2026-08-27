@@ -19,7 +19,6 @@ function ensureJudge(roomId) {
   const playerIds = Object.keys(room.players);
   if (playerIds.length === 0) return;
 
-  // 如果当前法官不存在或者不在房间内
   if (!room.judgeId || !room.players[room.judgeId]) {
     const firstPlayerId = playerIds[0];
     room.judgeId = firstPlayerId;
@@ -28,7 +27,7 @@ function ensureJudge(roomId) {
   }
 }
 
-// 广播房间信息：法官看所有人底牌，普通玩家只能看自己底牌
+// 广播房间信息
 function broadcastRoom(roomId) {
   const room = rooms[roomId];
   if (!room) return;
@@ -62,7 +61,6 @@ function broadcastRoom(roomId) {
 }
 
 io.on('connection', (socket) => {
-  // 加入房间
   socket.on('joinRoom', ({ roomId, playerName, isJudge }) => {
     socket.join(roomId);
     socket.roomId = roomId;
@@ -74,7 +72,8 @@ io.on('connection', (socket) => {
         players: {},
         sheriffId: null,
         gameStarted: false,
-        rolesConfig: { werewolf: 3, villager: 3, seer: 1, witch: 1, hunter: 1, guard: 0, idiot: 0 }
+        pendingTransfer: null,
+        rolesConfig: { '狼人': 3, '村民': 3, '预言家': 1, '女巫': 1, '猎人': 1, '守卫': 0 }
       };
     }
 
@@ -101,35 +100,59 @@ io.on('connection', (socket) => {
     broadcastRoom(roomId);
   });
 
-  // 法官请求移交权限 -> 发送给目标玩家确认
+  // 法官发起移交请求
   socket.on('requestTransferJudge', (targetId) => {
     const roomId = socket.roomId;
     const room = rooms[roomId];
     if (!room || socket.id !== room.judgeId || !room.players[targetId]) return;
 
+    room.pendingTransfer = { fromId: socket.id, toId: targetId };
     const fromJudgeName = room.players[socket.id].name;
-    // 通知被移交的目标玩家进行确认
+    const targetName = room.players[targetId].name;
+
+    // 向被移交玩家发送弹窗邀请
     io.to(targetId).emit('askJudgeAccept', { fromId: socket.id, fromName: fromJudgeName });
-    socket.emit('errorMsg', '移交请求已发出，等待对方确认...');
+    // 向原法官发送等待弹窗
+    socket.emit('transferWaitingStart', { targetName, targetId });
   });
 
-  // 目标玩家响应移交请求
+  // 法官主动取消移交
+  socket.on('cancelTransferJudge', () => {
+    const roomId = socket.roomId;
+    const room = rooms[roomId];
+    if (!room || !room.pendingTransfer || room.pendingTransfer.fromId !== socket.id) return;
+
+    const targetId = room.pendingTransfer.toId;
+    room.pendingTransfer = null;
+
+    socket.emit('transferWaitingEnd');
+    io.to(targetId).emit('transferCancelledByJudge');
+  });
+
+  // 被移交玩家响应请求
   socket.on('responseTransferJudge', ({ accept, fromId }) => {
     const roomId = socket.roomId;
     const room = rooms[roomId];
-    if (!room || room.judgeId !== fromId) return;
+    if (!room || !room.pendingTransfer || room.pendingTransfer.toId !== socket.id) return;
+
+    const originalJudgeId = room.pendingTransfer.fromId;
+    const targetName = room.players[socket.id]?.name || '该玩家';
+    room.pendingTransfer = null;
 
     if (accept) {
-      // 同意移交
-      room.players[fromId].isJudge = false;
+      room.players[originalJudgeId].isJudge = false;
       room.players[socket.id].isJudge = true;
       room.players[socket.id].role = null;
       room.judgeId = socket.id;
+      
+      io.to(originalJudgeId).emit('transferWaitingEnd');
+      socket.emit('transferAcceptedSuccess');
       broadcastRoom(roomId);
     } else {
-      // 拒绝移交，通知法官
-      const targetName = room.players[socket.id]?.name || '该玩家';
-      io.to(fromId).emit('errorMsg', `${targetName} 拒绝了法官移交请求。`);
+      // 目标玩家点击拒绝
+      io.to(originalJudgeId).emit('transferWaitingEnd');
+      io.to(originalJudgeId).emit('transferRejectedNotify', { targetName });
+      socket.emit('transferRejectedSelf');
     }
   });
 
@@ -158,7 +181,8 @@ io.on('connection', (socket) => {
     
     const rolePool = [];
     for (let role in config) {
-      for (let i = 0; i < config[role]; i++) {
+      const count = parseInt(config[role]) || 0;
+      for (let i = 0; i < count; i++) {
         rolePool.push(role);
       }
     }
@@ -169,11 +193,10 @@ io.on('connection', (socket) => {
     }
 
     if (rolePool.length !== playerIds.length) {
-      socket.emit('errorMsg', `配置角色数(${rolePool.length})与玩家人数(${playerIds.length})不一致`);
+      socket.emit('errorMsg', `配置角色总数(${rolePool.length})与普通玩家人数(${playerIds.length})不一致`);
       return;
     }
 
-    // 洗牌
     for (let i = rolePool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [rolePool[i], rolePool[j]] = [rolePool[j], rolePool[i]];
@@ -189,7 +212,7 @@ io.on('connection', (socket) => {
     broadcastRoom(roomId);
   });
 
-  // 结束本局，重置房间
+  // 结束本局重置
   socket.on('resetGame', () => {
     const roomId = socket.roomId;
     const room = rooms[roomId];
@@ -245,6 +268,11 @@ io.on('connection', (socket) => {
       }
       if (rooms[roomId].sheriffId === socket.id) {
         rooms[roomId].sheriffId = null;
+      }
+      if (rooms[roomId].pendingTransfer) {
+        if (rooms[roomId].pendingTransfer.fromId === socket.id || rooms[roomId].pendingTransfer.toId === socket.id) {
+          rooms[roomId].pendingTransfer = null;
+        }
       }
       broadcastRoom(roomId);
     }
