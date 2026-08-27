@@ -11,6 +11,37 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const rooms = {};
 
+// 广播房间信息：法官看所有人底牌，普通玩家只能看自己底牌
+function broadcastRoom(roomId) {
+  const room = rooms[roomId];
+  if (!room) return;
+
+  Object.keys(room.players).forEach(socketId => {
+    const isJudge = (socketId === room.judgeId);
+    
+    const sanitizedRoom = {
+      judgeId: room.judgeId,
+      sheriffId: room.sheriffId,
+      gameStarted: room.gameStarted,
+      rolesConfig: room.rolesConfig,
+      players: {}
+    };
+
+    Object.keys(room.players).forEach(pId => {
+      const p = room.players[pId];
+      sanitizedRoom.players[pId] = {
+        id: p.id,
+        name: p.name,
+        isJudge: p.isJudge,
+        isDead: p.isDead,
+        role: (isJudge || pId === socketId) ? p.role : null
+      };
+    });
+
+    io.to(socketId).emit('roomUpdate', sanitizedRoom);
+  });
+}
+
 io.on('connection', (socket) => {
   // 加入房间
   socket.on('joinRoom', ({ roomId, playerName, isJudge }) => {
@@ -31,7 +62,6 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     let actualIsJudge = false;
 
-    // 校验是否允许成为法官（一个房间只能有一个法官）
     if (isJudge) {
       if (!room.judgeId) {
         room.judgeId = socket.id;
@@ -51,7 +81,7 @@ io.on('connection', (socket) => {
       role: null
     };
 
-    io.to(roomId).emit('roomUpdate', room);
+    broadcastRoom(roomId);
   });
 
   // 移交法官权限
@@ -60,17 +90,15 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (!room || socket.id !== room.judgeId || !room.players[targetId]) return;
 
-    // 前任法官降级为普通玩家
     room.players[room.judgeId].isJudge = false;
-    // 新法官升级
     room.players[targetId].isJudge = true;
-    room.players[targetId].role = null; // 法官不参与发牌角色
+    room.players[targetId].role = null;
     room.judgeId = targetId;
 
-    io.to(roomId).emit('roomUpdate', room);
+    broadcastRoom(roomId);
   });
 
-  // 更新角色配置（仅法官）
+  // 更新角色配置
   socket.on('updateConfig', (config) => {
     const roomId = socket.roomId;
     if (rooms[roomId] && socket.id === rooms[roomId].judgeId) {
@@ -79,13 +107,12 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 开始发牌（仅法官）
+  // 开始发牌
   socket.on('startGame', () => {
     const roomId = socket.roomId;
     const room = rooms[roomId];
     if (!room || socket.id !== room.judgeId) return;
 
-    // 收集所有普通玩家（排除法官）
     const playerIds = Object.keys(room.players).filter(id => !room.players[id].isJudge);
     const config = room.rolesConfig;
     
@@ -117,46 +144,58 @@ io.on('connection', (socket) => {
     playerIds.forEach((id, index) => {
       room.players[id].role = rolePool[index];
       room.players[id].isDead = false;
-      io.to(id).emit('roleAssigned', rolePool[index]);
     });
 
-    io.to(roomId).emit('roomUpdate', room);
+    broadcastRoom(roomId);
   });
 
-  // 标记存活/死亡状态（仅法官）
+  // 结束本局，重置房间进入下一轮（仅法官）
+  socket.on('resetGame', () => {
+    const roomId = socket.roomId;
+    const room = rooms[roomId];
+    if (!room || socket.id !== room.judgeId) return;
+
+    room.gameStarted = false;
+    room.sheriffId = null;
+    Object.keys(room.players).forEach(id => {
+      room.players[id].role = null;
+      room.players[id].isDead = false;
+    });
+
+    broadcastRoom(roomId);
+  });
+
+  // 标记死亡/存活
   socket.on('toggleDeath', (targetId) => {
     const roomId = socket.roomId;
     const room = rooms[roomId];
     if (room && socket.id === room.judgeId && room.players[targetId]) {
       room.players[targetId].isDead = !room.players[targetId].isDead;
-      io.to(roomId).emit('roomUpdate', room);
+      broadcastRoom(roomId);
     }
   });
 
-  // 警长任命 / 移交警徽
+  // 警长任命 / 移交
   socket.on('setSheriff', (targetId) => {
     const roomId = socket.roomId;
     const room = rooms[roomId];
     if (!room) return;
 
-    // 首次任命（由法官指定）
     if (socket.id === room.judgeId && !room.sheriffId) {
       room.sheriffId = targetId;
-      io.to(roomId).emit('roomUpdate', room);
+      broadcastRoom(roomId);
       return;
     }
 
-    // 警长死亡后移交或撕毁
     const currentSheriff = room.players[room.sheriffId];
     if (currentSheriff && currentSheriff.isDead) {
       if (socket.id === room.sheriffId || socket.id === room.judgeId) {
         room.sheriffId = targetId;
-        io.to(roomId).emit('roomUpdate', room);
+        broadcastRoom(roomId);
       }
     }
   });
 
-  // 离开房间
   socket.on('disconnect', () => {
     const roomId = socket.roomId;
     if (rooms[roomId] && rooms[roomId].players[socket.id]) {
@@ -167,7 +206,7 @@ io.on('connection', (socket) => {
       if (rooms[roomId].sheriffId === socket.id) {
         rooms[roomId].sheriffId = null;
       }
-      io.to(roomId).emit('roomUpdate', rooms[roomId]);
+      broadcastRoom(roomId);
     }
   });
 });

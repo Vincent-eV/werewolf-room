@@ -14,22 +14,24 @@
     button:disabled { background: #555; cursor: not-allowed; }
     .btn-secondary { background: #0f3460; }
     .btn-warning { background: #9b59b6; }
+    .btn-reset { background: #c0392b; }
     .btn-dead { background: #444; color: #888; }
     .role-config { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .player-row { display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #252525; border-radius: 6px; margin-bottom: 6px; }
     .player-row.dead { opacity: 0.5; text-decoration: line-through; }
-    .badge { padding: 3px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-left: 4px; }
+    .badge { padding: 3px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-left: 4px; display: inline-block; }
     .badge-sheriff { background: #f39c12; color: #000; }
     .badge-judge { background: #9b59b6; color: #fff; }
     .badge-dead { background: #e74c3c; color: #fff; }
     .badge-alive { background: #2ecc71; color: #fff; }
+    .badge-role { background: #e94560; color: #fff; font-size: 13px; }
     .role-display { font-size: 24px; font-weight: bold; text-align: center; padding: 20px; background: #0f3460; border-radius: 8px; margin: 10px 0; color: #ffeb3b; }
     .hidden { display: none; }
   </style>
 </head>
 <body>
 
-  <!-- 登录加入卡片 -->
+  <!-- 加入界面 -->
   <div id="joinSection" class="card">
     <h2>🐺 狼人杀联机房间</h2>
     <input type="text" id="roomInput" placeholder="输入房间号 (如 888)">
@@ -43,7 +45,7 @@
   <!-- 游戏主大厅 -->
   <div id="gameSection" class="hidden">
     
-    <!-- 普通玩家专属：身份卡片 -->
+    <!-- 普通玩家身份卡片 -->
     <div id="roleCard" class="card hidden">
       <h3>🎭 你的身份</h3>
       <div id="roleText" class="role-display">等待法官发牌...</div>
@@ -73,10 +75,11 @@
       </div>
       <button class="btn-secondary" onclick="updateConfig()">同步配置</button>
       <button onclick="startGame()">🎲 开始分配角色 (仅法官)</button>
+      <button class="btn-reset" onclick="confirmResetGame()">🔄 结束本局 (开始下一轮)</button>
 
       <hr style="border-color:#333; margin:15px 0;">
       
-      <!-- 警长选举 -->
+      <!-- 警长任命 -->
       <h4>🎖️ 警长任命</h4>
       <select id="judgeSheriffSelect"></select>
       <button class="btn-secondary" onclick="judgeAppointSheriff()">任命选中玩家为警长</button>
@@ -136,6 +139,12 @@
       socket.emit('startGame');
     }
 
+    function confirmResetGame() {
+      if (confirm('确定要结束本局并开始下一轮吗？\n所有玩家的身份、出局状态和警长归属将被重置。')) {
+        socket.emit('resetGame');
+      }
+    }
+
     function toggleDeath(targetId) {
       socket.emit('toggleDeath', targetId);
     }
@@ -164,22 +173,22 @@
 
     socket.on('connect', () => { myId = socket.id; });
 
-    socket.on('roleAssigned', (role) => {
-      document.getElementById('roleText').innerText = roleNameMap[role] || role;
-    });
-
     socket.on('errorMsg', (msg) => { alert(msg); });
 
     socket.on('roomUpdate', (room) => {
       const isMeJudge = (room.judgeId === myId);
 
-      // 动态控制视图展示
+      // 视图控制
       if (isMeJudge) {
         document.getElementById('judgeSection').classList.remove('hidden');
         document.getElementById('roleCard').classList.add('hidden');
       } else {
         document.getElementById('judgeSection').classList.add('hidden');
         document.getElementById('roleCard').classList.remove('hidden');
+        
+        // 更新普通玩家自己的身份卡片
+        const myRole = room.players[myId]?.role;
+        document.getElementById('roleText').innerText = myRole ? (roleNameMap[myRole] || myRole) : '等待法官发牌...';
       }
 
       const playerListEl = document.getElementById('playerList');
@@ -203,6 +212,11 @@
         if (p.isJudge) tags += `<span class="badge badge-judge">法官</span>`;
         if (p.id === room.sheriffId) tags += `<span class="badge badge-sheriff">警长 🎖️</span>`;
         tags += `<span class="badge ${p.isDead ? 'badge-dead' : 'badge-alive'}">${p.isDead ? '已出局' : '存活'}</span>`;
+
+        // 法官视角下，展示玩家的具体身份标签
+        if (isMeJudge && !p.isJudge && p.role) {
+          tags += `<span class="badge badge-role">【${roleNameMap[p.role] || p.role}】</span>`;
+        }
 
         let actionBtn = '';
         if (isMeJudge && !p.isJudge) {
