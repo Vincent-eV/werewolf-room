@@ -47,7 +47,11 @@
     
     <!-- 普通玩家身份卡片 -->
     <div id="roleCard" class="card hidden">
-      <h3 style="display: flex; align-items: center;">🎭 你的身份 <span id="myStatusBadge"></span></h3>
+      <h3 style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
+        🎭 你的身份 
+        <span id="mySheriffBadge"></span>
+        <span id="myStatusBadge"></span>
+      </h3>
       <div id="roleText" class="role-display">等待法官发牌...</div>
     </div>
 
@@ -178,7 +182,7 @@
     socket.on('roomUpdate', (room) => {
       const isMeJudge = (room.judgeId === myId);
 
-      // 视图控制：法官和普通玩家界面切换
+      // 视图控制
       if (isMeJudge) {
         document.getElementById('judgeSection').classList.remove('hidden');
         document.getElementById('roleCard').classList.add('hidden');
@@ -186,29 +190,39 @@
         document.getElementById('judgeSection').classList.add('hidden');
         document.getElementById('roleCard').classList.remove('hidden');
         
-        // 更新普通玩家自己的身份卡片与生死状态
+        // 更新普通玩家自己的身份与警长/生死状态
         const me = room.players[myId];
         if (me) {
           const myRole = me.role;
           document.getElementById('roleText').innerText = myRole ? (roleNameMap[myRole] || myRole) : '等待法官发牌...';
           
+          const sheriffBadge = document.getElementById('mySheriffBadge');
           const statusBadge = document.getElementById('myStatusBadge');
           const roleCard = document.getElementById('roleCard');
           const roleText = document.getElementById('roleText');
 
-          // 核心更新：判定生死，改变玩家界面的样式
-          if (me.isDead) {
-            statusBadge.innerHTML = '<span class="badge badge-dead" style="font-size: 14px; margin-left: 10px;">💀 已阵亡</span>';
-            roleCard.style.borderColor = '#e74c3c'; // 边框变红
-            roleText.style.backgroundColor = '#3b0b0b'; // 背景变暗红
-            roleText.style.color = '#888'; // 文字变灰
-            roleText.style.textDecoration = 'line-through'; // 加上删除线
+          const isMeSheriff = (room.sheriffId === myId);
+
+          // 核心：仅在警长且存活时展示警长标志，死亡后自动取消
+          if (isMeSheriff && !me.isDead) {
+            sheriffBadge.innerHTML = '<span class="badge badge-sheriff" style="font-size: 13px; margin-left: 6px;">🎖️ 警长</span>';
           } else {
-            statusBadge.innerHTML = '<span class="badge badge-alive" style="font-size: 14px; margin-left: 10px;">🟢 存活</span>';
-            roleCard.style.borderColor = '#333'; // 恢复原状
-            roleText.style.backgroundColor = '#0f3460'; // 恢复原状
-            roleText.style.color = '#ffeb3b'; // 恢复原状
-            roleText.style.textDecoration = 'none'; // 取消删除线
+            sheriffBadge.innerHTML = '';
+          }
+
+          // 生死状态变化
+          if (me.isDead) {
+            statusBadge.innerHTML = '<span class="badge badge-dead" style="font-size: 13px; margin-left: 6px;">💀 已阵亡</span>';
+            roleCard.style.borderColor = '#e74c3c';
+            roleText.style.backgroundColor = '#3b0b0b';
+            roleText.style.color = '#888';
+            roleText.style.textDecoration = 'line-through';
+          } else {
+            statusBadge.innerHTML = '<span class="badge badge-alive" style="font-size: 13px; margin-left: 6px;">🟢 存活</span>';
+            roleCard.style.borderColor = '#333';
+            roleText.style.backgroundColor = '#0f3460';
+            roleText.style.color = '#ffeb3b';
+            roleText.style.textDecoration = 'none';
           }
         }
       }
@@ -235,7 +249,7 @@
         if (p.id === room.sheriffId) tags += `<span class="badge badge-sheriff">警长 🎖️</span>`;
         tags += `<span class="badge ${p.isDead ? 'badge-dead' : 'badge-alive'}">${p.isDead ? '已出局' : '存活'}</span>`;
 
-        // 法官视角下，展示玩家的具体身份标签
+        // 法官视角展示每个人的底牌
         if (isMeJudge && !p.isJudge && p.role) {
           tags += `<span class="badge badge-role">【${roleNameMap[p.role] || p.role}】</span>`;
         }
@@ -256,7 +270,7 @@
         }
       });
 
-      // 警长移交控制面板
+      // 警长移交控制面板（阵亡后展示）
       const amISheriff = (room.sheriffId === myId);
       const amIDead = room.players[myId]?.isDead;
       if (amISheriff && amIDead) {
