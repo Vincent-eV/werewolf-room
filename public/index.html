@@ -2,74 +2,89 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>狼人杀发牌房</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>狼人杀联机房间</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 600px; margin: 20px auto; padding: 0 15px; background: #1a1a24; color: #f0f0f5; }
-    h1, h2, h3 { color: #e44d26; text-align: center; }
-    .card { background: #252535; border-radius: 8px; padding: 20px; margin-bottom: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
-    input, button { padding: 10px; font-size: 14px; border-radius: 5px; border: 1px solid #444; margin: 4px 0; box-sizing: border-box; }
-    input { background: #171720; color: #fff; width: 100%; }
-    button { background: #e44d26; color: #fff; cursor: pointer; border: none; font-weight: bold; width: 100%; margin-top: 10px; }
-    button:hover { background: #ff5733; }
-    button.secondary { background: #44445c; }
-    .role-row { display: flex; gap: 8px; margin-bottom: 8px; }
-    .role-row input { margin: 0; }
-    .role-row button { width: auto; margin: 0; padding: 0 12px; }
-    .badge { display: inline-block; padding: 2px 6px; font-size: 12px; background: #f39c12; color: #000; border-radius: 4px; margin-left: 5px; font-weight: bold; }
-    .identity-reveal { font-size: 24px; text-align: center; color: #2ecc71; padding: 15px; border: 2px dashed #2ecc71; border-radius: 8px; margin-top: 10px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border: 1px solid #444; padding: 8px; text-align: left; }
-    th { background: #333348; }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { margin: 0; padding: 15px; background: #121212; color: #f0f0f0; }
+    .card { background: #1e1e1e; border-radius: 10px; padding: 16px; margin-bottom: 16px; border: 1px solid #333; }
+    h2, h3 { margin-top: 0; color: #e94560; }
+    input, button, select { width: 100%; padding: 12px; margin: 8px 0; border-radius: 6px; border: 1px solid #444; background: #2a2a2a; color: #fff; font-size: 16px; }
+    button { background: #e94560; border: none; font-weight: bold; cursor: pointer; }
+    button:disabled { background: #555; cursor: not-allowed; }
+    .btn-secondary { background: #0f3460; }
+    .btn-dead { background: #444; color: #888; }
+    .role-config { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .player-row { display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #252525; border-radius: 6px; margin-bottom: 6px; }
+    .player-row.dead { opacity: 0.5; text-decoration: line-through; }
+    .badge { padding: 3px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-left: 4px; }
+    .badge-sheriff { background: #f39c12; color: #000; }
+    .badge-judge { background: #9b59b6; color: #fff; }
+    .badge-dead { background: #e74c3c; color: #fff; }
+    .badge-alive { background: #2ecc71; color: #fff; }
+    .role-display { font-size: 24px; font-weight: bold; text-align: center; padding: 20px; background: #0f3460; border-radius: 8px; margin: 10px 0; color: #ffeb3b; }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
 
-  <h1>🐺 狼人杀联机发牌房</h1>
-
-  <!-- 1. 加入房间模块 -->
-  <div id="join-view" class="card">
-    <h2>加入 / 创建房间</h2>
-    <input type="text" id="room-input" placeholder="输入房间号 (如: 8888)">
-    <input type="text" id="name-input" placeholder="输入你的昵称">
-    <button onclick="joinRoom()">进入房间</button>
+  <!-- 加入页面 -->
+  <div id="joinSection" class="card">
+    <h2>🐺 狼人杀联机房间</h2>
+    <input type="text" id="roomInput" placeholder="输入房间号 (如 888)">
+    <input type="text" id="nameInput" placeholder="输入你的昵称">
+    <label style="display:flex; align-items:center; gap:8px; margin: 10px 0;">
+      <input type="checkbox" id="isJudgeCheck" style="width: auto;"> 我是法官 (主持人)
+    </label>
+    <button onclick="joinGame()">进入房间</button>
   </div>
 
-  <!-- 2. 房间主界面 -->
-  <div id="room-view" style="display:none;">
+  <!-- 游戏大厅 -->
+  <div id="gameSection" class="hidden">
     
-    <!-- 玩家信息与法官认领 -->
-    <div class="card">
-      <h3 id="room-title">房间号</h3>
-      <div><strong>当前玩家：</strong></div>
-      <ul id="player-list"></ul>
-      <button class="secondary" onclick="claimJudge()">👑 担任 / 抢选本局法官</button>
+    <!-- 玩家自己的身份卡片 -->
+    <div id="roleCard" class="card hidden">
+      <h3>🎭 你的身份</h3>
+      <div id="roleText" class="role-display">等待法官发牌...</div>
     </div>
 
-    <!-- 身份配置 -->
-    <div class="card" id="config-card">
-      <h3>配置身份牌</h3>
-      <div id="role-configs"></div>
-      <button class="secondary" onclick="addRoleRow()">+ 添加新角色</button>
-      <button onclick="saveAndSyncConfig()">保存并同步配置</button>
+    <!-- 警长移交面板（仅死亡警长可见） -->
+    <div id="sheriffPassSection" class="card hidden" style="border-color: #f39c12;">
+      <h3>🎖️ 警长移交 / 撕毁警徽</h3>
+      <p style="font-size:13px; color:#aaa;">你已被标记出局，请移交或撕毁警徽：</p>
+      <select id="sheriffTargetSelect"></select>
+      <button class="btn-secondary" onclick="passSheriff()">确定移交</button>
+      <button class="btn-dead" onclick="tearSheriff()">撕毁警徽</button>
     </div>
 
-    <!-- 游戏控制与发牌 -->
-    <div class="card">
-      <button onclick="startGame()">🎲 随机分发身份牌</button>
-      <button class="secondary" onclick="resetGame()">🔄 重置本局</button>
-    </div>
-
-    <!-- 身份展示区 -->
-    <div class="card" id="result-card" style="display:none;">
-      <h3>你的身份信息</h3>
-      <div id="my-role-display" class="identity-reveal"></div>
-      <div id="judge-table-container" style="display:none; margin-top: 20px;">
-        <h4>📜 全体身份清单 (法官专享)</h4>
-        <table id="judge-table">
-          <thead><tr><th>玩家</th><th>身份</th></tr></thead>
-          <tbody></tbody>
-        </table>
+    <!-- 法官控制中心（仅法官可见） -->
+    <div id="judgeSection" class="card hidden" style="border-color: #9b59b6;">
+      <h3>⚖️ 法官控制台</h3>
+      
+      <div class="role-config">
+        <div>狼人: <input type="number" id="cfg_werewolf" value="3" min="0"></div>
+        <div>村民: <input type="number" id="cfg_villager" value="3" min="0"></div>
+        <div>预言家: <input type="number" id="cfg_seer" value="1" min="0"></div>
+        <div>女巫: <input type="number" id="cfg_witch" value="1" min="0"></div>
+        <div>猎人: <input type="number" id="cfg_hunter" value="1" min="0"></div>
+        <div>守卫: <input type="number" id="cfg_guard" value="0" min="0"></div>
       </div>
+      <button class="btn-secondary" onclick="updateConfig()">同步配置</button>
+      <button onclick="startGame()">🎲 开始分配角色 (仅法官)</button>
+
+      <hr style="border-color:#333; margin:15px 0;">
+      
+      <div id="judgeSheriffElection">
+        <h4>🎖️ 警长选举控制</h4>
+        <select id="judgeSheriffSelect"></select>
+        <button class="btn-secondary" onclick="judgeAppointSheriff()">任命选中玩家为警长</button>
+      </div>
+    </div>
+
+    <!-- 房间玩家列表 -->
+    <div class="card">
+      <h3>👥 房间玩家 (<span id="playerCount">0</span>人)</h3>
+      <div id="playerList"></div>
     </div>
 
   </div>
@@ -77,110 +92,124 @@
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
-    let currentConfig = [];
+    let currentRoom = null;
+    let myId = null;
+    let amIJudge = false;
 
-    function joinRoom() {
-      const roomId = document.getElementById('room-input').value.trim();
-      const name = document.getElementById('name-input').value.trim();
-      if (!roomId || !name) return alert('请填写房间号和昵称');
+    const roleNameMap = {
+      werewolf: '狼人', villager: '村民', seer: '预言家',
+      witch: '女巫', hunter: '猎人', guard: '守卫', idiot: '白痴'
+    };
 
-      socket.emit('joinRoom', { roomId, name });
-      document.getElementById('join-view').style.display = 'none';
-      document.getElementById('room-view').style.display = 'block';
-      document.getElementById('room-title').innerText = `房间号: ${roomId}`;
+    function joinGame() {
+      const roomId = document.getElementById('roomInput').value.trim();
+      const playerName = document.getElementById('nameInput').value.trim();
+      amIJudge = document.getElementById('isJudgeCheck').checked;
+
+      if (!roomId || !playerName) return alert('请完整输入房间号与昵称');
+
+      socket.emit('joinRoom', { roomId, playerName, isJudge: amIJudge });
+      document.getElementById('joinSection').classList.add('hidden');
+      document.getElementById('gameSection').classList.remove('hidden');
+
+      if (amIJudge) {
+        document.getElementById('judgeSection').classList.remove('hidden');
+      } else {
+        document.getElementById('roleCard').classList.remove('hidden');
+      }
     }
 
-    function claimJudge() {
-      socket.emit('claimJudge');
-    }
-
-    function renderConfig(config) {
-      currentConfig = config;
-      const container = document.getElementById('role-configs');
-      container.innerHTML = '';
-      config.forEach((item, index) => {
-        const div = document.createElement('div');
-        div.className = 'role-row';
-        div.innerHTML = `
-          <input type="text" value="${item.roleName}" placeholder="角色名" onchange="updateRoleData(${index}, 'roleName', this.value)">
-          <input type="number" style="width: 80px;" value="${item.count}" min="0" placeholder="数量" onchange="updateRoleData(${index}, 'count', this.value)">
-          <button class="secondary" onclick="removeRoleRow(${index})">✕</button>
-        `;
-        container.appendChild(div);
-      });
-    }
-
-    function updateRoleData(index, field, value) {
-      currentConfig[index][field] = field === 'count' ? parseInt(value, 10) || 0 : value;
-    }
-
-    function addRoleRow() {
-      currentConfig.push({ roleName: '', count: 1 });
-      renderConfig(currentConfig);
-    }
-
-    function removeRoleRow(index) {
-      currentConfig.splice(index, 1);
-      renderConfig(currentConfig);
-    }
-
-    function saveAndSyncConfig() {
-      socket.emit('updateConfig', currentConfig);
-      alert('配置已同步');
+    function updateConfig() {
+      const config = {
+        werewolf: parseInt(document.getElementById('cfg_werewolf').value) || 0,
+        villager: parseInt(document.getElementById('cfg_villager').value) || 0,
+        seer: parseInt(document.getElementById('cfg_seer').value) || 0,
+        witch: parseInt(document.getElementById('cfg_witch').value) || 0,
+        hunter: parseInt(document.getElementById('cfg_hunter').value) || 0,
+        guard: parseInt(document.getElementById('cfg_guard').value) || 0
+      };
+      socket.emit('updateConfig', config);
     }
 
     function startGame() {
+      updateConfig();
       socket.emit('startGame');
     }
 
-    function resetGame() {
-      socket.emit('resetGame');
+    function toggleDeath(targetId) {
+      socket.emit('toggleDeath', targetId);
     }
 
-    socket.on('roomData', (data) => {
-      const list = document.getElementById('player-list');
-      list.innerHTML = '';
-      data.players.forEach(p => {
-        const li = document.createElement('li');
-        li.innerHTML = `${p.name} ${p.isJudge ? '<span class="badge">法官</span>' : ''}`;
-        list.appendChild(li);
+    function judgeAppointSheriff() {
+      const targetId = document.getElementById('judgeSheriffSelect').value;
+      if (targetId) socket.emit('setSheriff', targetId);
+    }
+
+    function passSheriff() {
+      const targetId = document.getElementById('sheriffTargetSelect').value;
+      if (targetId) socket.emit('setSheriff', targetId);
+    }
+
+    function tearSheriff() {
+      socket.emit('setSheriff', null);
+    }
+
+    socket.on('connect', () => { myId = socket.id; });
+
+    socket.on('roleAssigned', (role) => {
+      document.getElementById('roleText').innerText = roleNameMap[role] || role;
+    });
+
+    socket.on('errorMsg', (msg) => { alert(msg); });
+
+    socket.on('roomUpdate', (room) => {
+      currentRoom = room;
+      const playerListEl = document.getElementById('playerList');
+      const sheriffSelectEl = document.getElementById('judgeSheriffSelect');
+      const passSelectEl = document.getElementById('sheriffTargetSelect');
+      
+      playerListEl.innerHTML = '';
+      sheriffSelectEl.innerHTML = '<option value="">-- 选择警长 --</option>';
+      passSelectEl.innerHTML = '<option value="">-- 选择继任者 --</option>';
+
+      const players = Object.values(room.players);
+      document.getElementById('playerCount').innerText = players.length;
+
+      players.forEach(p => {
+        // 构建玩家展示条
+        const row = document.createElement('div');
+        row.className = `player-row ${p.isDead ? 'dead' : ''}`;
+
+        let tags = '';
+        if (p.isJudge) tags += `<span class="badge badge-judge">法官</span>`;
+        if (p.id === room.sheriffId) tags += `<span class="badge badge-sheriff">警长 🎖️</span>`;
+        tags += `<span class="badge ${p.isDead ? 'badge-dead' : 'badge-alive'}">${p.isDead ? '已出局' : '存活'}</span>`;
+
+        let actionBtn = '';
+        if (amIJudge && !p.isJudge) {
+          actionBtn = `<button style="width:auto; padding:4px 8px; margin:0;" onclick="toggleDeath('${p.id}')">${p.isDead ? '复活/撤销' : '标记死亡'}</button>`;
+        }
+
+        row.innerHTML = `<div><strong>${p.name}</strong> ${tags}</div><div>${actionBtn}</div>`;
+        playerListEl.appendChild(row);
+
+        // 下拉框填充
+        if (!p.isJudge) {
+          const opt1 = new Option(p.name, p.id);
+          const opt2 = new Option(p.name, p.id);
+          sheriffSelectEl.add(opt1);
+          if (!p.isDead) passSelectEl.add(opt2);
+        }
       });
-      if (currentConfig.length === 0) {
-        renderConfig(data.config);
-      }
-    });
 
-    socket.on('configUpdated', (config) => {
-      renderConfig(config);
-    });
-
-    socket.on('dealCards', (res) => {
-      document.getElementById('result-card').style.display = 'block';
-      document.getElementById('my-role-display').innerText = res.myRole;
-
-      const judgeTableContainer = document.getElementById('judge-table-container');
-      if (res.isJudge) {
-        judgeTableContainer.style.display = 'block';
-        const tbody = document.querySelector('#judge-table tbody');
-        tbody.innerHTML = '';
-        res.allRoles.forEach(p => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${p.name} ${p.isJudge ? '(法官)' : ''}</td><td><strong>${p.role}</strong></td>`;
-          tbody.appendChild(tr);
-        });
+      // 移交警徽面板逻辑（原警长阵亡后弹出）
+      const amISheriff = room.sheriffId === myId;
+      const amIDead = room.players[myId]?.isDead;
+      if (amISheriff && amIDead) {
+        document.getElementById('sheriffPassSection').classList.remove('hidden');
       } else {
-        judgeTableContainer.style.display = 'none';
+        document.getElementById('sheriffPassSection').classList.add('hidden');
       }
-    });
-
-    socket.on('gameReset', () => {
-      document.getElementById('result-card').style.display = 'none';
-      document.getElementById('judge-table-container').style.display = 'none';
-      alert('本局已重置，可重新配置并开始发牌。');
-    });
-
-    socket.on('errorMsg', (msg) => {
-      alert(msg);
     });
   </script>
 </body>

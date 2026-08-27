@@ -9,156 +9,144 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// 房间状态存储
 const rooms = {};
 
 io.on('connection', (socket) => {
-  socket.on('joinRoom', ({ roomId, name }) => {
-    if (!roomId || !name) return;
-    socket.roomId = roomId;
-    socket.name = name;
+  // 加入房间
+  socket.on('joinRoom', ({ roomId, playerName, isJudge }) => {
     socket.join(roomId);
+    socket.roomId = roomId;
+    socket.playerName = playerName;
+    socket.isJudge = isJudge;
 
     if (!rooms[roomId]) {
       rooms[roomId] = {
+        judgeId: isJudge ? socket.id : null,
         players: {},
-        config: [
-          { roleName: '狼人', count: 3 },
-          { roleName: '村民', count: 3 },
-          { roleName: '预言家', count: 1 },
-          { roleName: '女巫', count: 1 },
-          { roleName: '猎人', count: 1 }
-        ],
-        gameStarted: false
+        sheriffId: null,
+        gameStarted: false,
+        rolesConfig: { werewolf: 0, villager: 0, seer: 0, witch: 0, hunter: 0, guard: 0, idiot: 0 }
       };
     }
 
+    if (isJudge) {
+      rooms[roomId].judgeId = socket.id;
+    }
+
     rooms[roomId].players[socket.id] = {
-      name,
-      role: null,
-      isJudge: false
+      id: socket.id,
+      name: playerName,
+      isJudge: isJudge,
+      isDead: false,
+      role: null
     };
 
-    updateRoom(roomId);
+    io.to(roomId).emit('roomUpdate', rooms[roomId]);
   });
 
-  socket.on('claimJudge', () => {
-    const room = rooms[socket.roomId];
-    if (!room || room.gameStarted) return;
-
-    Object.keys(room.players).forEach(id => {
-      room.players[id].isJudge = (id === socket.id);
-    });
-
-    updateRoom(socket.roomId);
-  });
-
+  // 更新角色配置（仅法官）
   socket.on('updateConfig', (config) => {
-    const room = rooms[socket.roomId];
-    if (!room || room.gameStarted) return;
-    room.config = config;
-    io.to(socket.roomId).emit('configUpdated', config);
+    const roomId = socket.roomId;
+    if (rooms[roomId] && socket.id === rooms[roomId].judgeId) {
+      rooms[roomId].rolesConfig = config;
+      io.to(roomId).emit('configUpdate', config);
+    }
   });
 
+  // 开始发牌（仅法官）
   socket.on('startGame', () => {
-    const room = rooms[socket.roomId];
-    if (!room) return;
+    const roomId = socket.roomId;
+    const room = rooms[roomId];
+    if (!room || socket.id !== room.judgeId) return;
 
-    const allPlayerIds = Object.keys(room.players);
-    const judgeId = allPlayerIds.find(id => room.players[id].isJudge);
-
-    if (!judgeId) {
-      return socket.emit('errorMsg', '必须先有一位玩家自选为法官！');
-    }
-
-    const nonJudgeIds = allPlayerIds.filter(id => !room.players[id].isJudge);
-
-    let rolePool = [];
-    room.config.forEach(item => {
-      const cnt = parseInt(item.count, 10) || 0;
-      for (let i = 0; i < cnt; i++) {
-        rolePool.push(item.roleName);
+    // 收集所有普通玩家（排除法官）
+    const playerIds = Object.keys(room.players).filter(id => !room.players[id].isJudge);
+    const config = room.rolesConfig;
+    
+    const rolePool = [];
+    for (let role in config) {
+      for (let i = 0; i < config[role]; i++) {
+        rolePool.push(role);
       }
-    });
-
-    if (rolePool.length !== nonJudgeIds.length) {
-      return socket.emit(
-        'errorMsg',
-        `身份牌总数 (${rolePool.length}) 与游戏玩家数 (${nonJudgeIds.length}，不含法官) 不一致！`
-      );
     }
 
+    if (playerIds.length === 0) {
+      socket.emit('errorMsg', '房间内暂无玩家');
+      return;
+    }
+
+    if (rolePool.length !== playerIds.length) {
+      socket.emit('errorMsg', `配置角色数(${rolePool.length})与玩家人数(${playerIds.length})不一致`);
+      return;
+    }
+
+    // 洗牌算法
     for (let i = rolePool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [rolePool[i], rolePool[j]] = [rolePool[j], rolePool[i]];
     }
 
-    nonJudgeIds.forEach((id, index) => {
-      room.players[id].role = rolePool[index];
-    });
-    room.players[judgeId].role = '法官 (上帝视角)';
+    // 重置状态与分配
     room.gameStarted = true;
-
-    const fullRolesSummary = Object.entries(room.players).map(([id, p]) => ({
-      name: p.name,
-      role: p.role,
-      isJudge: p.isJudge
-    }));
-
-    allPlayerIds.forEach(id => {
-      const player = room.players[id];
-      if (player.isJudge) {
-        io.to(id).emit('dealCards', {
-          isJudge: true,
-          myRole: player.role,
-          allRoles: fullRolesSummary
-        });
-      } else {
-        io.to(id).emit('dealCards', {
-          isJudge: false,
-          myRole: player.role
-        });
-      }
+    room.sheriffId = null;
+    playerIds.forEach((id, index) => {
+      room.players[id].role = rolePool[index];
+      room.players[id].isDead = false;
+      io.to(id).emit('roleAssigned', rolePool[index]);
     });
 
-    updateRoom(socket.roomId);
+    io.to(roomId).emit('roomUpdate', room);
   });
 
-  socket.on('resetGame', () => {
-    const room = rooms[socket.roomId];
+  // 标记存活/死亡状态（仅法官）
+  socket.on('toggleDeath', (targetId) => {
+    const roomId = socket.roomId;
+    const room = rooms[roomId];
+    if (room && socket.id === room.judgeId && room.players[targetId]) {
+      room.players[targetId].isDead = !room.players[targetId].isDead;
+      io.to(roomId).emit('roomUpdate', room);
+    }
+  });
+
+  // 警长任命 / 移交徽章
+  socket.on('setSheriff', (targetId) => {
+    const roomId = socket.roomId;
+    const room = rooms[roomId];
     if (!room) return;
-    room.gameStarted = false;
-    Object.keys(room.players).forEach(id => {
-      room.players[id].role = null;
-    });
-    io.to(socket.roomId).emit('gameReset');
-    updateRoom(socket.roomId);
-  });
 
-  socket.on('disconnect', () => {
-    if (socket.roomId && rooms[socket.roomId]) {
-      delete rooms[socket.roomId].players[socket.id];
-      if (Object.keys(rooms[socket.roomId].players).length === 0) {
-        delete rooms[socket.roomId];
-      } else {
-        updateRoom(socket.roomId);
+    // 情况 1: 首次竞选由法官直接任命
+    if (socket.id === room.judgeId && !room.sheriffId) {
+      room.sheriffId = targetId;
+      io.to(roomId).emit('roomUpdate', room);
+      return;
+    }
+
+    // 情况 2: 原警长已阵亡，移交警徽（原警长操作或法官协助）
+    const currentSheriff = room.players[room.sheriffId];
+    if (currentSheriff && currentSheriff.isDead) {
+      if (socket.id === room.sheriffId || socket.id === room.judgeId) {
+        room.sheriffId = targetId; // 传 null 为撕警徽，传 targetId 为移交
+        io.to(roomId).emit('roomUpdate', room);
       }
     }
   });
-});
 
-function updateRoom(roomId) {
-  if (!rooms[roomId]) return;
-  const room = rooms[roomId];
-  const playerList = Object.entries(room.players).map(([id, p]) => ({
-    name: p.name,
-    isJudge: p.isJudge
-  }));
-  io.to(roomId).emit('roomData', {
-    players: playerList,
-    config: room.config,
-    gameStarted: room.gameStarted
+  // 断开连接处理
+  socket.on('disconnect', () => {
+    const roomId = socket.roomId;
+    if (rooms[roomId] && rooms[roomId].players[socket.id]) {
+      delete rooms[roomId].players[socket.id];
+      if (rooms[roomId].judgeId === socket.id) {
+        rooms[roomId].judgeId = null;
+      }
+      if (rooms[roomId].sheriffId === socket.id) {
+        rooms[roomId].sheriffId = null;
+      }
+      io.to(roomId).emit('roomUpdate', rooms[roomId]);
+    }
   });
-}
+});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
