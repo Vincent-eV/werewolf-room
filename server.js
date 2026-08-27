@@ -21,11 +21,10 @@ function ensureJudge(roomId) {
 
   // 如果当前法官不存在或者不在房间内
   if (!room.judgeId || !room.players[room.judgeId]) {
-    // 自动指定房间内第一个玩家为法官
     const firstPlayerId = playerIds[0];
     room.judgeId = firstPlayerId;
     room.players[firstPlayerId].isJudge = true;
-    room.players[firstPlayerId].role = null; // 法官不持牌
+    room.players[firstPlayerId].role = null;
   }
 }
 
@@ -82,7 +81,6 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     let actualIsJudge = false;
 
-    // 如果指定法官且当前无法官
     if (isJudge && !room.judgeId) {
       room.judgeId = socket.id;
       actualIsJudge = true;
@@ -103,18 +101,36 @@ io.on('connection', (socket) => {
     broadcastRoom(roomId);
   });
 
-  // 移交法官权限
-  socket.on('transferJudge', (targetId) => {
+  // 法官请求移交权限 -> 发送给目标玩家确认
+  socket.on('requestTransferJudge', (targetId) => {
     const roomId = socket.roomId;
     const room = rooms[roomId];
     if (!room || socket.id !== room.judgeId || !room.players[targetId]) return;
 
-    room.players[room.judgeId].isJudge = false;
-    room.players[targetId].isJudge = true;
-    room.players[targetId].role = null;
-    room.judgeId = targetId;
+    const fromJudgeName = room.players[socket.id].name;
+    // 通知被移交的目标玩家进行确认
+    io.to(targetId).emit('askJudgeAccept', { fromId: socket.id, fromName: fromJudgeName });
+    socket.emit('errorMsg', '移交请求已发出，等待对方确认...');
+  });
 
-    broadcastRoom(roomId);
+  // 目标玩家响应移交请求
+  socket.on('responseTransferJudge', ({ accept, fromId }) => {
+    const roomId = socket.roomId;
+    const room = rooms[roomId];
+    if (!room || room.judgeId !== fromId) return;
+
+    if (accept) {
+      // 同意移交
+      room.players[fromId].isJudge = false;
+      room.players[socket.id].isJudge = true;
+      room.players[socket.id].role = null;
+      room.judgeId = socket.id;
+      broadcastRoom(roomId);
+    } else {
+      // 拒绝移交，通知法官
+      const targetName = room.players[socket.id]?.name || '该玩家';
+      io.to(fromId).emit('errorMsg', `${targetName} 拒绝了法官移交请求。`);
+    }
   });
 
   // 更新角色配置
@@ -132,7 +148,6 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (!room || socket.id !== room.judgeId) return;
 
-    // 防止未重置就重复发牌
     if (room.gameStarted) {
       socket.emit('errorMsg', '当前对局已在进行中，请先点击【结束本局 (开始下一轮)】');
       return;
@@ -174,7 +189,7 @@ io.on('connection', (socket) => {
     broadcastRoom(roomId);
   });
 
-  // 结束本局，重置房间进入下一轮（仅法官）
+  // 结束本局，重置房间
   socket.on('resetGame', () => {
     const roomId = socket.roomId;
     const room = rooms[roomId];

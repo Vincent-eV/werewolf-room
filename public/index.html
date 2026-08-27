@@ -93,7 +93,7 @@
       <!-- 移交法官 -->
       <h4>🔄 移交法官权限</h4>
       <select id="transferJudgeSelect"></select>
-      <button class="btn-warning" onclick="transferJudge()">将法官移交给该玩家</button>
+      <button class="btn-warning" onclick="requestTransferJudge()">请求移交法官给该玩家</button>
     </div>
 
     <!-- 玩家名单列表 -->
@@ -158,12 +158,10 @@
       if (targetId) socket.emit('setSheriff', targetId);
     }
 
-    function transferJudge() {
+    function requestTransferJudge() {
       const targetId = document.getElementById('transferJudgeSelect').value;
       if (!targetId) return alert('请先选择要移交的玩家');
-      if (confirm('确定要将法官权限移交给该玩家吗？移交后你将成为普通玩家。')) {
-        socket.emit('transferJudge', targetId);
-      }
+      socket.emit('requestTransferJudge', targetId);
     }
 
     function passSheriff() {
@@ -179,6 +177,12 @@
 
     socket.on('errorMsg', (msg) => { alert(msg); });
 
+    // 收到法官权限移交请求的确认弹窗
+    socket.on('askJudgeAccept', ({ fromId, fromName }) => {
+      const accept = confirm(`法官【${fromName}】想要将法官权限移交给您，是否接受？\n点击“确定”成为新法官，点击“取消”拒绝。`);
+      socket.emit('responseTransferJudge', { accept, fromId });
+    });
+
     socket.on('roomUpdate', (room) => {
       const isMeJudge = (room.judgeId === myId);
 
@@ -187,7 +191,6 @@
         document.getElementById('judgeSection').classList.remove('hidden');
         document.getElementById('roleCard').classList.add('hidden');
 
-        // 发牌按钮逻辑：游戏进行中禁用，必须点下一轮后才解禁
         const startBtn = document.getElementById('startBtn');
         if (room.gameStarted) {
           startBtn.disabled = true;
@@ -200,7 +203,6 @@
         document.getElementById('judgeSection').classList.add('hidden');
         document.getElementById('roleCard').classList.remove('hidden');
         
-        // 更新普通玩家自己的身份与警长/生死状态
         const me = room.players[myId];
         if (me) {
           const myRole = me.role;
@@ -213,14 +215,12 @@
 
           const isMeSheriff = (room.sheriffId === myId);
 
-          // 警长状态
           if (isMeSheriff && !me.isDead) {
             sheriffBadge.innerHTML = '<span class="badge badge-sheriff" style="font-size: 13px; margin-left: 6px;">🎖️ 警长</span>';
           } else {
             sheriffBadge.innerHTML = '';
           }
 
-          // 生死状态
           if (me.isDead) {
             statusBadge.innerHTML = '<span class="badge badge-dead" style="font-size: 13px; margin-left: 6px;">💀 已阵亡</span>';
             roleCard.style.borderColor = '#e74c3c';
@@ -259,7 +259,6 @@
         if (p.id === room.sheriffId) tags += `<span class="badge badge-sheriff">警长 🎖️</span>`;
         tags += `<span class="badge ${p.isDead ? 'badge-dead' : 'badge-alive'}">${p.isDead ? '已出局' : '存活'}</span>`;
 
-        // 法官视角展示每个人的底牌
         if (isMeJudge && !p.isJudge && p.role) {
           tags += `<span class="badge badge-role">【${roleNameMap[p.role] || p.role}】</span>`;
         }
@@ -272,7 +271,6 @@
         row.innerHTML = `<div><strong>${p.name}</strong> ${tags}</div><div>${actionBtn}</div>`;
         playerListEl.appendChild(row);
 
-        // 填充下拉选项
         if (!p.isJudge) {
           sheriffSelectEl.add(new Option(p.name, p.id));
           transferSelectEl.add(new Option(p.name, p.id));
@@ -280,7 +278,6 @@
         }
       });
 
-      // 警长移交控制面板
       const amISheriff = (room.sheriffId === myId);
       const amIDead = room.players[myId]?.isDead;
       if (amISheriff && amIDead) {
