@@ -11,10 +11,30 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const rooms = {};
 
+// 检查并确保房间内至少有一个法官
+function ensureJudge(roomId) {
+  const room = rooms[roomId];
+  if (!room) return;
+
+  const playerIds = Object.keys(room.players);
+  if (playerIds.length === 0) return;
+
+  // 如果当前法官不存在或者不在房间内
+  if (!room.judgeId || !room.players[room.judgeId]) {
+    // 自动指定房间内第一个玩家为法官
+    const firstPlayerId = playerIds[0];
+    room.judgeId = firstPlayerId;
+    room.players[firstPlayerId].isJudge = true;
+    room.players[firstPlayerId].role = null; // 法官不持牌
+  }
+}
+
 // 广播房间信息：法官看所有人底牌，普通玩家只能看自己底牌
 function broadcastRoom(roomId) {
   const room = rooms[roomId];
   if (!room) return;
+
+  ensureJudge(roomId);
 
   Object.keys(room.players).forEach(socketId => {
     const isJudge = (socketId === room.judgeId);
@@ -62,13 +82,12 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     let actualIsJudge = false;
 
-    if (isJudge) {
-      if (!room.judgeId) {
-        room.judgeId = socket.id;
-        actualIsJudge = true;
-      } else {
-        socket.emit('errorMsg', '房间内已有法官，你已作为普通玩家加入');
-      }
+    // 如果指定法官且当前无法官
+    if (isJudge && !room.judgeId) {
+      room.judgeId = socket.id;
+      actualIsJudge = true;
+    } else if (isJudge && room.judgeId) {
+      socket.emit('errorMsg', '房间内已有法官，你已作为普通玩家加入');
     }
 
     socket.isJudge = actualIsJudge;
@@ -112,6 +131,12 @@ io.on('connection', (socket) => {
     const roomId = socket.roomId;
     const room = rooms[roomId];
     if (!room || socket.id !== room.judgeId) return;
+
+    // 防止未重置就重复发牌
+    if (room.gameStarted) {
+      socket.emit('errorMsg', '当前对局已在进行中，请先点击【结束本局 (开始下一轮)】');
+      return;
+    }
 
     const playerIds = Object.keys(room.players).filter(id => !room.players[id].isJudge);
     const config = room.rolesConfig;

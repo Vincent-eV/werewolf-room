@@ -10,8 +10,8 @@
     .card { background: #1e1e1e; border-radius: 10px; padding: 16px; margin-bottom: 16px; border: 1px solid #333; transition: all 0.3s ease; }
     h2, h3, h4 { margin-top: 0; color: #e94560; }
     input, button, select { width: 100%; padding: 12px; margin: 8px 0; border-radius: 6px; border: 1px solid #444; background: #2a2a2a; color: #fff; font-size: 16px; }
-    button { background: #e94560; border: none; font-weight: bold; cursor: pointer; }
-    button:disabled { background: #555; cursor: not-allowed; }
+    button { background: #e94560; border: none; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+    button:disabled { background: #444 !important; color: #777 !important; cursor: not-allowed; }
     .btn-secondary { background: #0f3460; }
     .btn-warning { background: #9b59b6; }
     .btn-reset { background: #c0392b; }
@@ -78,7 +78,7 @@
         <div>守卫: <input type="number" id="cfg_guard" value="0" min="0"></div>
       </div>
       <button class="btn-secondary" onclick="updateConfig()">同步配置</button>
-      <button onclick="startGame()">🎲 开始分配角色 (仅法官)</button>
+      <button id="startBtn" onclick="startGame()">🎲 开始分配角色 (仅法官)</button>
       <button class="btn-reset" onclick="confirmResetGame()">🔄 结束本局 (开始下一轮)</button>
 
       <hr style="border-color:#333; margin:15px 0;">
@@ -186,6 +186,16 @@
       if (isMeJudge) {
         document.getElementById('judgeSection').classList.remove('hidden');
         document.getElementById('roleCard').classList.add('hidden');
+
+        // 发牌按钮逻辑：游戏进行中禁用，必须点下一轮后才解禁
+        const startBtn = document.getElementById('startBtn');
+        if (room.gameStarted) {
+          startBtn.disabled = true;
+          startBtn.innerText = '🔒 对局进行中 (需先结束本局)';
+        } else {
+          startBtn.disabled = false;
+          startBtn.innerText = '🎲 开始分配角色 (仅法官)';
+        }
       } else {
         document.getElementById('judgeSection').classList.add('hidden');
         document.getElementById('roleCard').classList.remove('hidden');
@@ -203,14 +213,14 @@
 
           const isMeSheriff = (room.sheriffId === myId);
 
-          // 核心：仅在警长且存活时展示警长标志，死亡后自动取消
+          // 警长状态
           if (isMeSheriff && !me.isDead) {
             sheriffBadge.innerHTML = '<span class="badge badge-sheriff" style="font-size: 13px; margin-left: 6px;">🎖️ 警长</span>';
           } else {
             sheriffBadge.innerHTML = '';
           }
 
-          // 生死状态变化
+          // 生死状态
           if (me.isDead) {
             statusBadge.innerHTML = '<span class="badge badge-dead" style="font-size: 13px; margin-left: 6px;">💀 已阵亡</span>';
             roleCard.style.borderColor = '#e74c3c';
@@ -270,7 +280,7 @@
         }
       });
 
-      // 警长移交控制面板（阵亡后展示）
+      // 警长移交控制面板
       const amISheriff = (room.sheriffId === myId);
       const amIDead = room.players[myId]?.isDead;
       if (amISheriff && amIDead) {
